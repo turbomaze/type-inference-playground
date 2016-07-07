@@ -14,11 +14,13 @@ var B_ = new AbstractType('B`');
 var C = new AbstractType('C');
 var C_ = new AbstractType('C`');
 var C__ = new AbstractType('C``');
+var D = new AbstractType('D');
+var D_ = new AbstractType('D`');
 
-var J = new AbstractType('J');
 var K = new AbstractType('K');
 var L = new AbstractType('L');
 var M = new AbstractType('M');
+var N = new AbstractType('N');
 
 var X = new AbstractType('X');
 var Y = new AbstractType('Y');
@@ -40,25 +42,29 @@ var signatures = {
   'A': [
     [Str]
   ],
-  'zero': [
-    [Int, Bool]
-  ],
 
   '+': [
-    [A, B, X],
-    [A, B_, Z],
-    [A_, B, X],
-    [A_, B_, Y]
+    [A, B, L],
+    [A, B_, L],
+    [A_, B, K]
   ],
+
+  '-': [
+    [C, D, L],
+    [C, D_, M],
+    [C_, D, M],
+    [C__, D, N]
+  ],
+
   '*': [
-    [X, C, J],
-    [X, C_, K],
-    [Z, C_, L],
-    [Z, C__, M]
+    [L, L, X],
+    [L, M, Y],
+    [K, N, Z]
   ]
 };
 var statements = [
-  ['*', ['+', 'a', 'b'], 'c']
+  ['*', ['+', 'a', 'b'], ['-', 'c', 'd']]
 ];
 
-var results = TypeInferer.infer2(signatures, statements);
+var results = TypeInferer.infer(signatures, statements);
+
