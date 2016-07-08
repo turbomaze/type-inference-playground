@@ -2,11 +2,6 @@ var util = require('util');
 
 module.exports = {};
 
-console.logv = (a) => {
-  console.log(util.inspect(a, false, null));
-  console.log();
-};
-
 // classes to help with types
 class AbstractType {
   constructor(type) {
@@ -14,25 +9,64 @@ class AbstractType {
   }
 }
 
-function populateTypeDict(typeDict, functionSignatures, statement) {
-  if (typeof statement === 'string') {
+// work methods 
+function infer(functionSignatures, expressions) {
+
+  // annotate the nodes of the expression tree to disambiguate repeated functions
+  var labeledExpression = expressions[0]; // only look at the first one for now
+  disambiguate(expressions[0], 0);
+  console.log('Input expression');
+  console.logv(labeledExpression);
+
+  // construct 
+  var constraints = {};
+  getConstraints(constraints, functionSignatures, labeledExpression);
+  console.log('Constraints dictionary');
+  console.logv(constraints);
+
+  var validTypeSettings = reconstruct(constraints, labeledExpression);
+  console.log('Valid type combinations');
+  console.logv(validTypeSettings);
+
+  return validTypeSettings;
+}
+
+function disambiguate(expression, id) {
+  if (typeof expression === 'string') {
+    return id; 
+  } else {
+    expression[0] = expression[0] + '#' + id;
+    id += 1;
+    for (var s = 1; s < expression.length; s++) {
+      id = disambiguate(expression[s], id);
+    }
+    return id;
+  }
+}
+
+function getConstraints(constraints, functionSignatures, expression) {
+  if (typeof expression === 'string') {
     // parameter
     return false;
   } else {
-    var name = statement[0];
-    var signatures = functionSignatures[name];
+    var expressionName = expression[0];
+    var functionName = expressionName.substring(0, expressionName.lastIndexOf('#'));
+    var signatures = functionSignatures[functionName];
 
     // get the type restrictions imposed by previous function calls
-    var callArity = statement.length - 1; // the arity of this specific call
+    var callArity = expression.length - 1; // the arity of this specific call
     var typeRestrictions = null; // null if no restrictions; otherwise, array of valid types 
-    if (name in typeDict) {
-      if ('_' in typeDict[name]) {
-        typeRestrictions = typeDict[name]['_'];
+    if (expressionName in constraints) {
+      if ('_' in constraints[expressionName]) {
+        // this is a leader, so its constraints are all under the magic key '_'
+        typeRestrictions = constraints[expressionName]['_'];
       } else {
+        // this is a follower, so its constraints are indexed by its leader's types
         typeRestrictions = {};
-        for (var key in typeDict[name]) {
-          typeDict[name][key].forEach((setting) => {
-            typeRestrictions[setting[0]] = true;
+        for (var leaderType in constraints[expressionName]) {
+          constraints[expressionName][leaderType].forEach((setting) => {
+            // we use object keys to ensure uniqueness
+            typeRestrictions[setting[0]] = true; 
           });
         }
         typeRestrictions = Object.keys(typeRestrictions);
@@ -52,48 +86,115 @@ function populateTypeDict(typeDict, functionSignatures, statement) {
       });
     }
     
-    // record the viable signatures in the typeDict entries for each child
-    for (var c = 1, st = 0; c < statement.length; c++, st++) {
-      var child = statement[c];
+    // record the viable signatures in the constraints entries for each child
+    for (var c = 1, st = 0; c < expression.length; c++, st++) {
+      var child = expression[c];
       var childName = typeof child === 'string' ? child : child[0];
 
+      // TODO: arbitrary arity
       if (c === 1) { // first child is special
-        typeDict[childName] = {_: {}};
+        constraints[childName] = {'_': {}}; // constraints indexed by magic '_'
         for (var signature of viableSignatures) {
           // add type signature[st] to the types of the first child
-          typeDict[childName]['_'][signature[st].type] = true;
+          constraints[childName]['_'][signature[st].type] = true;
         }
-        typeDict[childName]['_'] = Object.keys(typeDict[childName]['_']);
+        constraints[childName]['_'] = Object.keys(constraints[childName]['_']);
       } else {
-         // add signature[j] where signature is from annotation of child i to the type dict of child j, indexed by previous children types in signature
-        typeDict[childName] = {};
+        constraints[childName] = {}; // otherwise, index constraints by the first child's types
         for (var signature of viableSignatures) {
-          // add type signature[st] to the types of the first child
-          var key = signature[st - 1].type; // the previous child's value for this signature
-          var returnType = signature[signature.length - 1].type;
-          if (key in typeDict[childName]) {
-            typeDict[childName][key].push([signature[st].type, returnType]);
+          // the previous child is referred to as the "leader"
+          var leaderType = signature[st - 1].type; // the leader's type
+          var followerType = signature[st].type; // this child's, the follower's, type
+          var expressionType = signature[signature.length - 1].type; // the expression's type
+          
+          // safely append the [followerType, expressionType] to the follower's constraints
+          if (leaderType in constraints[childName]) {
+            constraints[childName][leaderType].push([followerType, expressionType]);
           } else {
-            typeDict[childName][key] = [[signature[st].type, returnType]];
+            constraints[childName][leaderType] = [[followerType, expressionType]];
           }
         }
       }
 
       // recurse on this child
-      populateTypeDict(typeDict, functionSignatures, child);
+      getConstraints(constraints, functionSignatures, child);
     }
   }
 }
 
-function merge(a, b) {
-  var obj = {};
-  for (var keyA in a) {
-    obj[keyA] = a[keyA];
+function reconstruct(constraints, expression) {
+  var reconstruction = {};
+
+  // base case: parameters
+  if (typeof expression === 'string') {
+    if ('_' in constraints[expression]) {
+      constraints[expression]['_'].forEach((type) => {
+        reconstruction[type] = [{}]; 
+        reconstruction[type][0][expression] = type;
+      });
+    } else {
+      for (var key in constraints[expression]) {
+        reconstruction[key] = constraints[expression][key].map((type) => {
+          var obj = {};
+          obj[expression] = type;
+          return obj; 
+        });
+      }
+    }
+    return reconstruction;
   }
-  for (var keyB in b) {
-    obj[keyB] = b[keyB];
+
+  // first, reconstruct all the children
+  var reconstructedKids = [];
+  for (var c = 1; c < expression.length; c++) {
+    var child = expression[c];
+    reconstructedKids.push(reconstruct(constraints, child));
   }
-  return obj;
+
+  // make it easier to access the children
+  var leader = reconstructedKids[0]; // TODO: arbitrary arity
+  var follower = reconstructedKids[1];
+
+  // finally, combine the constructed children
+  if (typeof expression[2] === 'string') { // second argument is a parameter -> easy
+    for (var leaderType in leader) {
+      var followerSettings = follower[leaderType];
+      reconstruction = consolidate(
+        reconstruction, parameterProduct(leader[leaderType], followerSettings)
+      );
+    }
+  } else {
+    // get the correspondence dictionary to link the constructed kids together
+    var correspondence = constraints[expression[2][0]]; // aka constraint
+
+    // fill in the gaps of follower's reconstruction
+    for (var followerType in follower) {
+      follower[followerType] = follower[followerType].map((settings) => {
+        return [settings, null]; // placeholder for the expression return types
+      });
+    }
+
+    // use the correspondence information to perform the more complex reconstruction
+    for (var leaderType in correspondence) {
+      var signaturePartials = correspondence[leaderType];
+      for (var signaturePartial of signaturePartials) {
+        var followerType = signaturePartial[0];
+        var expressionType = signaturePartial[1];
+
+        follower[followerType] = follower[followerType].map((settings) => {
+          settings[1] = expressionType;
+          return settings;
+        });
+
+        reconstruction = consolidate(
+          reconstruction,
+          functionProduct(leader[leaderType], follower[followerType])
+        );
+      }
+    }
+  } 
+
+  return reconstruction;
 }
 
 function consolidate(a, b) {
@@ -111,7 +212,7 @@ function consolidate(a, b) {
   return obj;
 }
 
-function product(setListA, setListB) {
+function parameterProduct(setListA, setListB) {
   var obj = {};
   for (var setA of setListA) {
     for (var setB of setListB) {
@@ -131,7 +232,7 @@ function product(setListA, setListB) {
   return obj;
 }
 
-function product2(setListA, setListB) {
+function functionProduct(setListA, setListB) {
   var obj = {};
   for (var setA of setListA) {
     for (var setB of setListB) {
@@ -148,87 +249,22 @@ function product2(setListA, setListB) {
   return obj;
 }
 
-function reconstruct(typeDict, statement) {
-  // base case: parameters
-  if (typeof statement === 'string') {
-    var reconstruction = {};
-    if ('_' in typeDict[statement]) {
-      typeDict[statement]['_'].forEach((type) => {
-        reconstruction[type] = [{}]; 
-        reconstruction[type][0][statement] = type;
-      });
-    } else {
-      for (var key in typeDict[statement]) {
-        reconstruction[key] = typeDict[statement][key].map((type) => {
-          var obj = {};
-          obj[statement] = type;
-          return obj; 
-        });
-      }
-    }
-    return reconstruction;
+function merge(a, b) {
+  var obj = {};
+  for (var keyA in a) {
+    obj[keyA] = a[keyA];
   }
-
-  // first, reconstruct all the children
-  var reconstructedKids = [];
-  for (var c = 1; c < statement.length; c++) {
-    var child = statement[c];
-    reconstructedKids.push(reconstruct(typeDict, child));
+  for (var keyB in b) {
+    obj[keyB] = b[keyB];
   }
-
-  // make it easier to access them
-  var reconstructions = {};
-  var child0 = reconstructedKids[0]; // TODO: arbitrary arity
-  var child1 = reconstructedKids[1];
-
-  // console.log(statement[0]);
-
-  // combine the constructed children
-  if (typeof statement[2] !== 'string') {
-    // get the correspondence dictionary to link the constructed kids together
-    var correspondence = typeDict[statement[2][0]];
-    // console.logv(correspondence);
-
-    // use the correspondence information to perform the more complex reconstruction
-    for (var key in correspondence) {
-      var child1keysToIterate = correspondence[key];
-      for (var child1returnType of child1keysToIterate) {
-
-        // console.log('child1');
-        child1[child1returnType[0]] = child1[child1returnType[0]].map((settings) => {
-          return [settings, child1returnType[1]];
-        });
-        // console.logv(child1[child1returnType[0]]);
-        // console.log('product');
-        // console.logv(product2(child0[key], child1[child1returnType[0]]));
-
-        reconstructions = consolidate(
-          reconstructions,
-          product2(child0[key], child1[child1returnType[0]])
-        );
-      }
-    }
-  } else { // second argument is a parameter -> easy
-    for (var type0 in child0) {
-      var child1Settings = child1[type0];
-
-      reconstructions = consolidate(reconstructions, product(child0[type0], child1Settings));
-    }
-  }
-
-  return reconstructions;
+  return obj;
 }
 
-function infer(functionSignatures, statements) {
-  var typeDict = {};
-  populateTypeDict(typeDict, functionSignatures, statements[0]);
-  console.log('type dict');
-  console.logv(typeDict);
-  var validTypeSettings = reconstruct(typeDict, statements[0]);
-  console.log('types');
-  console.logv(validTypeSettings);
-  return typeDict;
-}
+// helper methods
+console.logv = (a) => {
+  console.log(util.inspect(a, false, null));
+  console.log();
+};
 
 module.exports = {
   infer: infer,

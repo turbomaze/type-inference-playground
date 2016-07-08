@@ -35,36 +35,39 @@ var signatures = {
     [Float, Float, Float],
     [Str, Str, Str]
   ],
+
   'substr': [
     [Str, Int, Str],
     [Str, Float, Str],
   ],
-  'A': [
-    [Str]
+
+  'exp': [
+    [Int, Int, Int],
+    [Int, Float, Float]
   ],
 
-  '+': [
+  '(+)': [
     [A, B, L],
     [A, B_, L],
     [A_, B, K]
   ],
 
-  '-': [
+  '(-)': [
     [C, D, L],
     [C, D_, M],
     [C_, D, M],
     [C__, D, N]
   ],
 
-  '*': [
+  '(*)': [
     [L, L, X],
     [L, M, Y],
     [K, N, Z]
   ]
 };
 var statements = [
-  ['*', ['+', 'a', 'b'], ['-', 'c', 'd']]
+  ['(*)', ['(+)', 'a', 'b'], ['(-)', 'c', 'd']]
+  // ['plus', ['plus', 'c', 'd'], ['plus', 'a', 'b']],
 ];
 
 var results = TypeInferer.infer(signatures, statements);
-
