@@ -1,6 +1,10 @@
 var TypeInferer = require('./type-inferer');
 var AbstractType = TypeInferer.AbstractType;
 
+process.on('uncaughtException', function(err) {
+  console.log(err.stack);
+});
+
 // program-specific primitive types
 var Bool = new AbstractType('Bool');
 var Int = new AbstractType('Int');
@@ -46,6 +50,14 @@ var signatures = {
     [Int, Float, Float]
   ],
 
+  'binaryNot': [
+    [Int, Int]
+  ],
+
+  'truncate': [
+    [Float, Int]
+  ],
+
   '(+)': [
     [A, B, L],
     [A, B_, L],
@@ -68,12 +80,13 @@ var signatures = {
 };
 var statements = [
   // ['(*)', ['(+)', 'a', 'b'], ['(-)', 'c', 'd']]
-  ['plus', ['substr', 'a', 'b'], ['plus', 'c', 'c']]
+  ['truncate', ['plus', ['binaryNot', 'a'], ['plus', 'b', 'c']]]
 ];
 
 try {
   var results = TypeInferer.infer(signatures, statements);
 } catch (e) {
   console.log(e.message);
+  console.log(e.stack);
   console.log(JSON.stringify(e.data));
 }

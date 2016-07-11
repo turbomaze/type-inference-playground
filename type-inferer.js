@@ -166,6 +166,7 @@ function reconstruct(constraints, expression, err) {
 
   // make it easier to access the children
   var leader = reconstructedKids[0]; // TODO: arbitrary arity
+  if (reconstructedKids.length === 1) return leader;
   var follower = reconstructedKids[1];
 
   // finally, combine the constructed children
