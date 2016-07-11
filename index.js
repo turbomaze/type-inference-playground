@@ -56,6 +56,7 @@ var signatures = {
     [C, D, L],
     [C, D_, M],
     [C_, D, M],
+    [B, D, M],
     [C__, D, N]
   ],
 
@@ -66,8 +67,13 @@ var signatures = {
   ]
 };
 var statements = [
-  ['(*)', ['(+)', 'a', 'b'], ['(-)', 'c', 'd']]
-  // ['plus', ['plus', 'c', 'd'], ['plus', 'a', 'b']],
+  // ['(*)', ['(+)', 'a', 'b'], ['(-)', 'c', 'd']]
+  ['plus', ['substr', 'a', 'b'], ['plus', 'c', 'c']]
 ];
 
-var results = TypeInferer.infer(signatures, statements);
+try {
+  var results = TypeInferer.infer(signatures, statements);
+} catch (e) {
+  console.log(e.message);
+  console.log(JSON.stringify(e.data));
+}

@@ -24,7 +24,15 @@ function infer(functionSignatures, expressions) {
   console.log('Constraints dictionary');
   console.logv(constraints);
 
-  var validTypeSettings = reconstruct(constraints, labeledExpression);
+  var inconsistencies = {};
+  var validTypeSettings = reconstruct(constraints, labeledExpression, inconsistencies);
+  if (Object.keys(validTypeSettings).length === 0) {
+    throw {
+      'message': 'ERR: inconsistent type constraints.',
+      'data': inconsistencies
+    };
+  }
+
   console.log('Valid type combinations');
   console.logv(validTypeSettings);
 
@@ -32,16 +40,17 @@ function infer(functionSignatures, expressions) {
 }
 
 function disambiguate(expression, id) {
-  if (typeof expression === 'string') {
-    return id; 
-  } else {
-    expression[0] = expression[0] + '#' + id;
-    id += 1;
-    for (var s = 1; s < expression.length; s++) {
+  expression[0] = expression[0] + '#' + id;
+  id += 1;
+  for (var s = 1; s < expression.length; s++) {
+    if (typeof expression[s] === 'string') {
+      expression[s] = expression[s] + '#' + id;
+      id += 1;
+    } else {
       id = disambiguate(expression[s], id);
     }
-    return id;
   }
+  return id;
 }
 
 function getConstraints(constraints, functionSignatures, expression) {
@@ -122,7 +131,7 @@ function getConstraints(constraints, functionSignatures, expression) {
   }
 }
 
-function reconstruct(constraints, expression) {
+function reconstruct(constraints, expression, err) {
   var reconstruction = {};
 
   // base case: parameters
@@ -148,7 +157,11 @@ function reconstruct(constraints, expression) {
   var reconstructedKids = [];
   for (var c = 1; c < expression.length; c++) {
     var child = expression[c];
-    reconstructedKids.push(reconstruct(constraints, child));
+    var childReconstruction = reconstruct(constraints, child, err);
+    if (Object.keys(childReconstruction).length === 0) {
+      return {};
+    }
+    reconstructedKids.push(childReconstruction);
   }
 
   // make it easier to access the children
@@ -160,7 +173,7 @@ function reconstruct(constraints, expression) {
     for (var leaderType in leader) {
       var followerSettings = follower[leaderType];
       reconstruction = consolidate(
-        reconstruction, parameterProduct(leader[leaderType], followerSettings)
+        reconstruction, parameterProduct(leader[leaderType], followerSettings, err)
       );
     }
   } else {
@@ -181,15 +194,17 @@ function reconstruct(constraints, expression) {
         var followerType = signaturePartial[0];
         var expressionType = signaturePartial[1];
 
-        follower[followerType] = follower[followerType].map((settings) => {
-          settings[1] = expressionType;
-          return settings;
-        });
+        if (leaderType in leader && followerType in follower) {
+          follower[followerType] = follower[followerType].map((settings) => {
+            settings[1] = expressionType;
+            return settings;
+          });
 
-        reconstruction = consolidate(
-          reconstruction,
-          functionProduct(leader[leaderType], follower[followerType])
-        );
+          reconstruction = consolidate(
+            reconstruction,
+            functionProduct(leader[leaderType], follower[followerType], err)
+          );
+        }
       }
     }
   } 
@@ -212,33 +227,48 @@ function consolidate(a, b) {
   return obj;
 }
 
-function parameterProduct(setListA, setListB) {
-  var obj = {};
-  for (var setA of setListA) {
-    for (var setB of setListB) {
-      var setBKey = Object.keys(setB)[0];
-      var setBType = setB[setBKey][0];
-      var returnType = setB[setBKey][1];
-      var strippedSetB = {};
-      strippedSetB[setBKey] = setBType;
-      var newSetting = merge(setA, strippedSetB);
-      if (returnType in obj) {
-        obj[returnType].push(newSetting);
-      } else {
-        obj[returnType] = [newSetting];
-      }
-    }
-  }
-  return obj;
+function parameterProduct(setListA, setListB, err) {
+  return product(setListA, setListB, err, function getStrippedSet(set) {
+    var setKey = Object.keys(set)[0];
+    var setType = set[setKey][0];
+    var strippedSet = {};
+    strippedSet[setKey] = setType;
+    return strippedSet; 
+  }, function getReturnType(set) {
+    var setKey = Object.keys(set)[0];
+    var returnType = set[setKey][1];
+    return returnType; 
+  });
 }
 
-function functionProduct(setListA, setListB) {
+function functionProduct(setListA, setListB, err) {
+  return product(setListA, setListB, err, function getStrippedSet(set) {
+    return set[0]; 
+  }, function getReturnType(set) {
+    return set[1]; 
+  });
+}
+
+function product(setListA, setListB, err, getStrippedSet, getReturnType) {
   var obj = {};
+
+  if (typeof setListA !== 'object' || typeof setListB !== 'object') {
+    return obj;
+  }
+
   for (var setA of setListA) {
     for (var setB of setListB) {
-      var strippedSetB = setB[0];
-      var returnType = setB[1];
-      var newSetting = merge(setA, strippedSetB);
+      var strippedSetB = getStrippedSet(setB);
+      var returnType = getReturnType(setB);
+
+      try {
+        var newSetting = merge(setA, strippedSetB);
+      } catch (e) {
+        // inconsistent constraints
+        if (!(e[0] in err)) err[e[0]] = e[1];
+        continue;
+      }
+
       if (returnType in obj) {
         obj[returnType].push(newSetting);
       } else {
@@ -246,17 +276,37 @@ function functionProduct(setListA, setListB) {
       }
     }
   }
-  return obj;
+
+  if (Object.keys(obj).length === 0) {
+    return {};
+  } else return obj;
 }
 
 function merge(a, b) {
   var obj = {};
+
+  // console.log('merging ', a, b);
+
   for (var keyA in a) {
-    obj[keyA] = a[keyA];
+    var index = keyA.lastIndexOf('#');
+    var disambiguatedKeyA = keyA;
+    if (index !== -1) disambiguatedKeyA = keyA.substring(0, index);
+    obj[disambiguatedKeyA] = a[keyA];
   }
+
   for (var keyB in b) {
-    obj[keyB] = b[keyB];
+    var index = keyB.lastIndexOf('#');
+    var disambiguatedKeyB = keyB;
+    if (index !== -1) disambiguatedKeyB = keyB.substring(0, index);
+    
+    var proposedType = obj[disambiguatedKeyB];
+    if (disambiguatedKeyB in obj && proposedType !== b[keyB]) {
+      throw [disambiguatedKeyB, [proposedType, b[keyB]]];
+    } else {
+      obj[disambiguatedKeyB] = b[keyB];
+    }
   }
+
   return obj;
 }
 
@@ -266,6 +316,7 @@ console.logv = (a) => {
   console.log();
 };
 
+// exports
 module.exports = {
   infer: infer,
   AbstractType: AbstractType
